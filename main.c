@@ -15,8 +15,8 @@ float ball_rad          = 30;
 float pw                = 10;
 float ph                = 100;
 SDL_FColor paddle_color = {
-    .r = 0.9,
-    .g = 0.7,
+    .r = 1.0,
+    .g = 1.0,
     .b = 1.0,
     .a = 1.0,
 };
@@ -31,6 +31,7 @@ struct Ball
     float dir_x;
     float dir_y;
     float speed;
+    float iframes;
     SDL_Color color;
 };
 
@@ -155,25 +156,73 @@ SDL_Color generate_color()
 void add_ball(float x, float y, float dir_x, float dir_y, float speed)
 {
     if (current_balls == MAX_BALLS) return;
+
+    // normalise direction
+    float mag  = sqrtf(dir_x * dir_x + dir_y * dir_y);
+    dir_x     /= mag;
+    dir_y     /= mag;
+
     balls[current_balls++] = (struct Ball) {
-        .x     = x,
-        .y     = y,
-        .dir_x = dir_x,
-        .dir_y = dir_y,
-        .speed = speed,
-        .color = generate_color(),
+        .x       = x,
+        .y       = y,
+        .dir_x   = dir_x,
+        .dir_y   = dir_y,
+        .speed   = speed,
+        .iframes = 0,
+        .color   = generate_color(),
     };
 }
 
-struct Ball generate_ball(int paddle, int dir)
+void do_ball_collision(int idx)
 {
-    struct Ball ball = {};
-    if (paddle < 0 || paddle > 1)
+    if (balls[idx].iframes > 0) return;
+
+    float brh = ball_rad * 0.5;
+    for (int i = 0; i < 2; i++)
     {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Out of bounds paddle index %d", paddle);
-        return ball;
+        float dx = fabsf(paddles[i].x - balls[idx].x);
+        float dy = fabsf(paddles[i].y - balls[idx].y);
+
+        float min_x = (pw * 0.5f) + brh;
+        float min_y = (ph * 0.5f) + brh;
+
+        if (dx > min_x) { continue; }
+        if (dy > min_y) { continue; }
+
+        // collision confirmed
+        balls[idx].iframes = 0.5;
+
+        // overlap
+        float ox = dx - min_x;
+        float oy = dy - min_y;
+
+        if (ox > oy)
+        {
+            if (balls[idx].x < paddles[i].x)
+            {
+                balls[idx].x     -= ox;
+                balls[idx].dir_x  = -fabsf(balls[idx].dir_x);
+            }
+            else
+            {
+                balls[idx].x     += ox;
+                balls[idx].dir_x  = fabsf(balls[idx].dir_x);
+            }
+        }
+        else
+        {
+            if (balls[idx].y < paddles[i].y)
+            {
+                balls[idx].y     -= oy;
+                balls[idx].dir_y  = -fabsf(balls[idx].dir_y);
+            }
+            else
+            {
+                balls[idx].y     += oy;
+                balls[idx].dir_y  = fabsf(balls[idx].dir_y);
+            }
+        }
     }
-    return ball;
 }
 
 void update_ball(int idx)
@@ -181,39 +230,30 @@ void update_ball(int idx)
     float brh = ball_rad * 0.5;
 
     // check collision with both paddles
-    for (int i = 0; i < 2; i++)
+    do_ball_collision(idx);
+
+    // out of bounds, bounce in
+    if (balls[idx].x - brh < 0)
     {
-        float ax  = paddles[i].x - pw * 0.5;
-        float ay  = paddles[i].y - ph * 0.5;
-
-        float bx  = balls[idx].x - brh;
-        float by  = balls[idx].y - brh;
-
-        float dx = fabsf(ax - bx);
-        float dy = fabsf(ay - by);
-
-        if (dx > (pw / 2 + ball_rad)) { continue; }
-        if (dy > (ph / 2 + ball_rad)) { continue; }
-
-        if (dx <= (pw / 2)) { balls[idx].dir_x *= -1; }
-        if (dy <= (ph / 2)) { balls[idx].dir_x *= -1; }
+        balls[idx].x     = brh;
+        balls[idx].dir_x = fabsf(balls[idx].dir_x);
+    }
+    else if (balls[idx].x + brh > w_width)
+    {
+        balls[idx].x     = w_width - brh;
+        balls[idx].dir_x = -fabsf(balls[idx].dir_x);
     }
 
-    // respawn when out of bounds
-    if (balls[idx].x - brh < 0 || balls[idx].x + brh > w_width)
+    if (balls[idx].y - brh < 0)
     {
-        balls[idx].dir_x *= -1;
+        balls[idx].y     = brh;
+        balls[idx].dir_y = fabsf(balls[idx].dir_y);
     }
-    else if (balls[idx].y - brh < 0 || balls[idx].y + brh > w_height)
+    else if (balls[idx].y + brh > w_height)
     {
-        balls[idx].dir_y *= -1;
+        balls[idx].y     = w_height - brh;
+        balls[idx].dir_y = -fabsf(balls[idx].dir_y);
     }
-    // float brh = ball_rad;
-    // if (balls[idx].x + brh < 0 || balls[idx].x - brh > w_width || balls[idx].y + brh < 0 || balls[idx].y - brh > w_height)
-    // {
-    //     int paddle = rand() % 2;
-    //     balls[idx] = generate_ball(paddle, (balls[idx].dir_y >= 0) * 2 - 1);
-    // }
 }
 
 void paddle_flip(int index)
@@ -287,6 +327,7 @@ float update()
         balls[i].x += balls[i].dir_x * balls[i].speed * dt;
         balls[i].y += balls[i].dir_y * balls[i].speed * dt;
 
+        balls[i].iframes -= dt;
         update_ball(i);
     }
 
@@ -366,7 +407,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
 
     set_initials(w_width, w_height);
 
-    for (int i = 0; i < 20; i++)
+    for (int i = 0; i < MAX_BALLS; i++)
     {
         float x     = (float)(300 + (rand() % (500 - 300)));
         float y     = (float)(300 + (rand() % (500 - 300)));
